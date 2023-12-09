@@ -234,6 +234,99 @@ pub fn derive_serde(_attr: TokenStream, item: TokenStream) -> TokenStream {
     proc_macro::TokenStream::from(gen)
 }
 
+// If `derive_rkyv` meta item is not present, defaults to cfg!(feature = "rkyv").
+// `derive_rkyv` can only be true when rkyv is enabled.
+struct DeriveRkyv(bool);
+
+impl Parse for DeriveRkyv {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut result = Ok(None);
+        let mut derive_rkyv = Vec::new();
+        let meta_items = input.parse_terminated::<MetaNameValue, Comma>(MetaNameValue::parse)?;
+        for meta in meta_items {
+            if meta.path.segments.len() != 1 {
+                extend_errors!(
+                    result,
+                    syn::Error::new(
+                        meta.span(),
+                        "tarpc::service does not support this meta item"
+                    )
+                );
+                continue;
+            }
+            let segment = meta.path.segments.first().unwrap();
+            if segment.ident != "derive_rkyv" {
+                extend_errors!(
+                    result,
+                    syn::Error::new(
+                        meta.span(),
+                        "tarpc::service does not support this meta item"
+                    )
+                );
+                continue;
+            }
+            match meta.lit {
+                Lit::Bool(LitBool { value: true, .. }) if cfg!(feature = "rkyv") => {
+                    result = result.and(Ok(Some(true)))
+                }
+                Lit::Bool(LitBool { value: true, .. }) => {
+                    extend_errors!(
+                        result,
+                        syn::Error::new(
+                            meta.span(),
+                            "To enable rkyv, first enable the `rkyv` feature of tarpc"
+                        )
+                    );
+                }
+                Lit::Bool(LitBool { value: false, .. }) => result = result.and(Ok(Some(false))),
+                _ => extend_errors!(
+                    result,
+                    syn::Error::new(
+                        meta.lit.span(),
+                        "`derive_rkyv` expects a value of type `bool`"
+                    )
+                ),
+            }
+            derive_rkyv.push(meta);
+        }
+        if derive_rkyv.len() > 1 {
+            for (i, derive_rkyv) in derive_rkyv.iter().enumerate() {
+                extend_errors!(
+                    result,
+                    syn::Error::new(
+                        derive_rkyv.span(),
+                        format!(
+                            "`derive_rkyv` appears more than once (occurrence #{})",
+                            i + 1
+                        )
+                    )
+                );
+            }
+        }
+        let derive_rkyv = result?.unwrap_or(cfg!(feature = "rkyv"));
+        Ok(Self(derive_rkyv))
+    }
+}
+
+/// A helper attribute to avoid a direct dependency on rkyv.
+///
+/// Adds the following annotations to the annotated item:
+///
+/// ```rust
+/// #[derive(tarpc::rkyv::Serialize, tarpc::rkyv::Deserialize, tarpc::rkyv::Archive)]
+/// #[archive(crate = "tarpc::rkyv", check_bytes)]
+/// # struct Foo;
+/// ```
+#[proc_macro_attribute]
+pub fn derive_rkyv(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut gen: proc_macro2::TokenStream = quote! {
+        #[derive(tarpc::rkyv::Serialize, tarpc::rkyv::Deserialize, tarpc::rkyv::Archive)]
+        #[archive(crate = "tarpc::rkyv", check_bytes)]
+    };
+    gen.extend(proc_macro2::TokenStream::from(item));
+    proc_macro::TokenStream::from(gen)
+}
+
 /// Generates:
 /// - service trait
 /// - serve fn
@@ -243,7 +336,9 @@ pub fn derive_serde(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - ResponseFut Future
 #[proc_macro_attribute]
 pub fn service(attr: TokenStream, input: TokenStream) -> TokenStream {
+    let attr2 = attr.clone();
     let derive_serde = parse_macro_input!(attr as DeriveSerde);
+    let derive_rkyv = parse_macro_input!(attr2 as DeriveRkyv);
     let unit_type: &Type = &parse_quote!(());
     let Service {
         ref attrs,
@@ -262,6 +357,15 @@ pub fn service(attr: TokenStream, input: TokenStream) -> TokenStream {
         Some(
             quote! {#[derive(tarpc::serde::Serialize, tarpc::serde::Deserialize)]
             #[serde(crate = "tarpc::serde")]},
+        )
+    } else {
+        None
+    };
+
+    let derive_rkyv = if derive_rkyv.0 {
+        Some(
+            quote! {#[derive(tarpc::rkyv::Serialize, tarpc::rkyv::Deserialize, tarpc::rkyv::Archive)]
+        #[archive(crate = "tarpc::rkyv", check_bytes)]},
         )
     } else {
         None
@@ -309,6 +413,7 @@ pub fn service(attr: TokenStream, input: TokenStream) -> TokenStream {
             .map(|name| parse_str(&format!("{name}Fut")).unwrap())
             .collect::<Vec<_>>(),
         derive_serialize: derive_serialize.as_ref(),
+        derive_rkyv: derive_rkyv.as_ref(),
     }
     .into_token_stream()
     .into()
@@ -450,6 +555,7 @@ struct ServiceGenerator<'a> {
     return_types: &'a [&'a Type],
     arg_pats: &'a [Vec<&'a Pat>],
     derive_serialize: Option<&'a TokenStream2>,
+    derive_rkyv: Option<&'a TokenStream2>,
 }
 
 impl<'a> ServiceGenerator<'a> {
@@ -569,6 +675,7 @@ impl<'a> ServiceGenerator<'a> {
     fn enum_request(&self) -> TokenStream2 {
         let &Self {
             derive_serialize,
+            derive_rkyv,
             vis,
             request_ident,
             camel_case_idents,
@@ -581,6 +688,7 @@ impl<'a> ServiceGenerator<'a> {
             #[allow(missing_docs)]
             #[derive(Debug)]
             #derive_serialize
+            #derive_rkyv
             #vis enum #request_ident {
                 #( #camel_case_idents{ #( #args ),* } ),*
             }
@@ -590,6 +698,7 @@ impl<'a> ServiceGenerator<'a> {
     fn enum_response(&self) -> TokenStream2 {
         let &Self {
             derive_serialize,
+            derive_rkyv,
             vis,
             response_ident,
             camel_case_idents,
@@ -602,6 +711,7 @@ impl<'a> ServiceGenerator<'a> {
             #[allow(missing_docs)]
             #[derive(Debug)]
             #derive_serialize
+            #derive_rkyv
             #vis enum #response_ident {
                 #( #camel_case_idents(#return_types) ),*
             }

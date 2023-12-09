@@ -15,6 +15,7 @@ description = "Proc macros for tarpc."
 
 [features]
 serde1 = []
+rkyv = []
 
 [badges]
 travis-ci = { repository = "google/tarpc" }

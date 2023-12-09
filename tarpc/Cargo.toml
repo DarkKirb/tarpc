@@ -26,6 +26,7 @@ serde-transport-json = ["tokio-serde/json"]
 serde-transport-bincode = ["tokio-serde/bincode"]
 tcp = ["tokio/net"]
 unix = ["tokio/net"]
+rkyv = ["dep:rkyv", "tarpc-plugins/rkyv"]
 
 full = [
     "serde1",
@@ -35,6 +36,7 @@ full = [
     "serde-transport-bincode",
     "tcp",
     "unix",
+    "rkyv",
 ]
 
 [badges]
@@ -60,7 +62,7 @@ tracing = { version = "0.1", default-features = false, features = [
 ] }
 tracing-opentelemetry = { version = "0.18.0", default-features = false }
 opentelemetry = { version = "0.18.0", default-features = false }
-
+rkyv = { version = "0.7.42", optional = true, features = ["validation"] }
 
 [dev-dependencies]
 assert_matches = "1.4"

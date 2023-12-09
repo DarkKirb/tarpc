@@ -208,6 +208,10 @@
 #[doc(hidden)]
 pub use serde;
 
+#[cfg(feature = "rkyv")]
+#[doc(hidden)]
+pub use rkyv;
+
 #[cfg(feature = "serde-transport")]
 pub use {tokio_serde, tokio_util};
 
@@ -219,6 +223,9 @@ pub mod trace;
 
 #[cfg(feature = "serde1")]
 pub use tarpc_plugins::derive_serde;
+
+#[cfg(feature = "rkyv")]
+pub use tarpc_plugins::derive_rkyv;
 
 /// The main macro that creates RPC services.
 ///
@@ -317,6 +324,10 @@ use std::{error::Error, fmt::Display, io, time::SystemTime};
 /// A message from a client to a server.
 #[derive(Debug)]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 #[non_exhaustive]
 pub enum ClientMessage<T> {
     /// A request initiated by a user. The server responds to a request by invoking a
@@ -344,6 +355,11 @@ pub enum ClientMessage<T> {
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 pub struct Request<T> {
     /// Trace context, deadline, and other cross-cutting concerns.
     pub context: context::Context,
@@ -357,6 +373,11 @@ pub struct Request<T> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 pub struct Response<T> {
     /// The ID of the request being responded to.
     pub request_id: u64,
@@ -369,6 +390,11 @@ pub struct Response<T> {
 #[error("{kind:?}: {detail}")]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 pub struct ServerError {
     #[cfg_attr(
         feature = "serde1",
@@ -378,10 +404,120 @@ pub struct ServerError {
         feature = "serde1",
         serde(deserialize_with = "util::serde::deserialize_io_error_kind_from_u32")
     )]
+    #[cfg_attr(feature = "rkyv", with(RkyvErrorKind))]
     /// The type of error that occurred to fail the request.
     pub kind: io::ErrorKind,
     /// A message describing more detail about the error that occurred.
     pub detail: String,
+}
+
+#[cfg(feature = "rkyv")]
+struct RkyvErrorKind;
+
+#[cfg(feature = "rkyv")]
+impl rkyv::with::ArchiveWith<io::ErrorKind> for RkyvErrorKind {
+    type Archived = rkyv::Archived<u8>;
+    type Resolver = rkyv::Resolver<u8>;
+
+    unsafe fn resolve_with(field: &io::ErrorKind, pos: usize, _: (), out: *mut Self::Archived) {
+        use rkyv::Archive;
+        use std::io::ErrorKind::*;
+        let discrim: u8 = match *field {
+            NotFound => 0,
+            PermissionDenied => 1,
+            ConnectionRefused => 2,
+            ConnectionReset => 3,
+            ConnectionAborted => 4,
+            NotConnected => 5,
+            AddrInUse => 6,
+            AddrNotAvailable => 7,
+            BrokenPipe => 8,
+            AlreadyExists => 9,
+            WouldBlock => 10,
+            InvalidInput => 11,
+            InvalidData => 12,
+            TimedOut => 13,
+            WriteZero => 14,
+            Interrupted => 15,
+            Other => 16,
+            UnexpectedEof => 17,
+            _ => 16,
+        };
+        discrim.resolve(pos, (), out);
+    }
+}
+
+#[cfg(feature = "rkyv")]
+impl<S: rkyv::Fallible + ?Sized> rkyv::with::SerializeWith<io::ErrorKind, S> for RkyvErrorKind
+where
+    u8: rkyv::Serialize<S>,
+{
+    fn serialize_with(
+        field: &io::ErrorKind,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        use rkyv::Serialize;
+        use std::io::ErrorKind::*;
+        let discrim: u8 = match *field {
+            NotFound => 0,
+            PermissionDenied => 1,
+            ConnectionRefused => 2,
+            ConnectionReset => 3,
+            ConnectionAborted => 4,
+            NotConnected => 5,
+            AddrInUse => 6,
+            AddrNotAvailable => 7,
+            BrokenPipe => 8,
+            AlreadyExists => 9,
+            WouldBlock => 10,
+            InvalidInput => 11,
+            InvalidData => 12,
+            TimedOut => 13,
+            WriteZero => 14,
+            Interrupted => 15,
+            Other => 16,
+            UnexpectedEof => 17,
+            _ => 16,
+        };
+        discrim.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "rkyv")]
+impl<D: rkyv::Fallible + ?Sized> rkyv::with::DeserializeWith<rkyv::Archived<u8>, io::ErrorKind, D>
+    for RkyvErrorKind
+where
+    rkyv::Archived<u8>: rkyv::Deserialize<u8, D>,
+{
+    fn deserialize_with(
+        field: &rkyv::Archived<u8>,
+        deserializer: &mut D,
+    ) -> Result<io::ErrorKind, D::Error> {
+        use rkyv::Deserialize;
+        use std::io::ErrorKind::*;
+        let discrim: u8 = field.deserialize(deserializer)?;
+        Ok(match discrim {
+            0 => NotFound,
+            1 => PermissionDenied,
+            2 => ConnectionRefused,
+            3 => ConnectionReset,
+            4 => ConnectionAborted,
+            5 => NotConnected,
+            6 => AddrInUse,
+            7 => AddrNotAvailable,
+            8 => BrokenPipe,
+            9 => AlreadyExists,
+            10 => WouldBlock,
+            11 => InvalidInput,
+            12 => InvalidData,
+            13 => TimedOut,
+            14 => WriteZero,
+            15 => Interrupted,
+            16 => Other,
+            17 => UnexpectedEof,
+            _ => Other,
+        })
+    }
 }
 
 /// Critical errors that result in a Channel disconnecting.

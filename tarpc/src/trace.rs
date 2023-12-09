@@ -31,6 +31,11 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 /// that triggered the current span, and a trace with which all related spans are associated.
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 pub struct Context {
     /// An identifier of the trace associated with the current context. A trace ID is typically
     /// created at a root span and passed along through all causal events.
@@ -53,11 +58,21 @@ pub struct Context {
 /// same trace ID.
 #[derive(Default, PartialEq, Eq, Hash, Clone, Copy)]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 pub struct TraceId(#[cfg_attr(feature = "serde1", serde(with = "u128_serde"))] u128);
 
 /// A 64-bit identifier of a span within a trace. The identifier is unique within the span's trace.
 #[derive(Default, PartialEq, Eq, Hash, Clone, Copy)]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 pub struct SpanId(u64);
 
 /// Indicates whether a sampler has decided whether or not to sample the trace associated with the
@@ -68,6 +83,11 @@ pub struct SpanId(u64);
 /// Otherwise, the full trace would not be able to be reconstructed reliably.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 #[repr(u8)]
 pub enum SamplingDecision {
     /// The associated span was sampled by its creating process. Child spans must also be sampled.

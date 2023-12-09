@@ -24,18 +24,70 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
 pub struct Context {
     /// When the client expects the request to be complete by. The server should cancel the request
     /// if it is not complete by this time.
     #[cfg_attr(feature = "serde1", serde(default = "ten_seconds_from_now"))]
     // Serialized as a Duration to prevent clock skew issues.
     #[cfg_attr(feature = "serde1", serde(with = "absolute_to_relative_time"))]
+    #[cfg_attr(feature = "rkyv", with(RkyvSystemTime))]
     pub deadline: SystemTime,
     /// Uniquely identifies requests originating from the same source.
     /// When a service handles a request by making requests itself, those requests should
     /// include the same `trace_id` as that included on the original request. This way,
     /// users can trace related actions across a distributed system.
     pub trace_context: trace::Context,
+}
+
+#[cfg(feature = "rkyv")]
+struct RkyvSystemTime;
+
+#[cfg(feature = "rkyv")]
+impl rkyv::with::ArchiveWith<SystemTime> for RkyvSystemTime {
+    type Archived = rkyv::Archived<Duration>;
+    type Resolver = rkyv::Resolver<Duration>;
+
+    unsafe fn resolve_with(field: &SystemTime, pos: usize, _: (), out: *mut Self::Archived) {
+        use rkyv::Archive;
+        let deadline = field
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO);
+        deadline.resolve(pos, (), out);
+    }
+}
+
+#[cfg(feature = "rkyv")]
+impl<S: rkyv::Fallible + ?Sized> rkyv::with::SerializeWith<SystemTime, S> for RkyvSystemTime
+where
+    Duration: rkyv::Serialize<S>,
+{
+    fn serialize_with(field: &SystemTime, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        use rkyv::Serialize;
+        let deadline = field
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO);
+        deadline.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "rkyv")]
+impl<D: rkyv::Fallible + ?Sized>
+    rkyv::with::DeserializeWith<rkyv::Archived<Duration>, SystemTime, D> for RkyvSystemTime
+where
+    rkyv::Archived<Duration>: rkyv::Deserialize<Duration, D>,
+{
+    fn deserialize_with(
+        field: &rkyv::Archived<Duration>,
+        deserializer: &mut D,
+    ) -> Result<SystemTime, D::Error> {
+        use rkyv::Deserialize;
+        Ok(SystemTime::UNIX_EPOCH + field.deserialize(deserializer)?)
+    }
 }
 
 #[cfg(feature = "serde1")]
